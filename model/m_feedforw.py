@@ -34,12 +34,12 @@ class Parameters:
 
 
 fn_clipping01 = lambda tensor: tf.fake_quant_with_min_max_args(tensor, min=0., max=1., num_bits=8)
-fn_normalize_by_max = lambda tensor: tf.divide(tensor, tf.reduce_max(tensor, axis=[1,2,3], keep_dims=True) + 1e-5)
+fn_normalize_by_max = lambda tensor: tf.divide(tensor, tf.reduce_max(tensor, axis=[1,2,3], keepdims=True) + 1e-5)
 
 def fn_loss_entropy(tensor, label):
     return tf.nn.sparse_softmax_cross_entropy_with_logits(
         logits=tensor,
-        labels=tf.squeeze(label, squeeze_dims=[3]),
+        labels=tf.squeeze(label, axis=[3]),
         name="entropy")
 
 def weight_map(weights, name):
@@ -57,7 +57,7 @@ def weight_map(weights, name):
 class FeedForwardNetworks(Model):
     """Image to Instruction Network"""
 
-    def __init__(self, sess, tf_flag):
+    def __init__(self, tf_flag):
         """Initialize the parameters for a network.
 
 		Args:
@@ -67,7 +67,7 @@ class FeedForwardNetworks(Model):
 		"""
 
         # TODO: pull out more parameters from the hard coded parameters
-        self.sess = sess
+        # Remove sess - TF2 uses eager execution
         self.oparam = Parameters()
         self.oparam.learning_rate = tf_flag.learning_rate
         self.oparam.max_iter = tf_flag.max_iter
@@ -577,323 +577,249 @@ class FeedForwardNetworks(Model):
                                         is_train = False)
 
     def train(self):
-        """Train a network"""
-        self.step = tf.train.get_or_create_global_step()
-
-        lr = tf.train.exponential_decay(
-            self.oparam.learning_rate,
-            global_step=self.step,
-            decay_steps=self.oparam.params.get('decay_steps', 50000), # 10k
-            decay_rate=self.oparam.params.get('decay_rate', 0.3), # 0.99
-            staircase=True)
-
+        """Train a network using TF2 eager execution"""
+        
         # Initialize optimizers
         use_discr = self.oparam.params.get('discr', 1)
-
-        def create_train_op(lr, loss, tvars, global_step):
-            optim = tf.train.AdamOptimizer(
-                lr, beta1=0.5, epsilon=1e-4)
-            grads_and_vars = optim.compute_gradients(
-                loss, tvars, colocate_gradients_with_ops=True)
-            return optim.apply_gradients(
-                grads_and_vars, global_step = global_step)
-
-        # as well as batch normalization (until it becomes a dependency of discriminator)
-        base_deps = []
-        runit_type = self.oparam.params.get('runit', 'relu')
-        if 1: # just for now 'bn' in runit_type or 'in' in runit_type:
-            base_deps.extend(tf.get_collection(tf.GraphKeys.UPDATE_OPS))
-        else:
-            base_deps = None
-
-        # replay buffer
-        replay_worst = self.oparam.params.get('replay_worst', 0)
-        if replay_worst:
-            replay_deps = []
-            net = self.tf_models.net
-            with tf.variable_scope('replay_worst', tf.AUTO_REUSE):
-                worst_type = self.oparam.params.get('worst_type', 'fg')
-                assert worst_type in net.acc, 'Invalid worst type'
-                # compute index of worst sample from current batch
-                acc = net.acc[worst_type]
-                real_accs = tf.concat([acc[REAL], acc['worst']], axis = 0)
-                real_inps = tf.concat([self.tf_models.X[REAL], self.tf_models.X['worst']], axis = 0)
-                real_outs = tf.concat([self.tf_models.Y[INST_REAL], self.tf_models.Y['worst']], axis = 0)
-                _, worst_idx = tf.nn.top_k(-tf.squeeze(real_accs), self.loader.batch_size)
-                # update worst buffer for input
-                worst_inps = tf.gather(real_inps, worst_idx)
-                dep = self.tf_models.X['worst'].assign(worst_inps, read_value = False)
-                replay_deps.append(dep)
-                # update worst vuffer for output
-                worst_outs = tf.gather(real_outs, worst_idx)
-                dep = self.tf_models.Y['worst'].assign(worst_outs, read_value = False)
-                replay_deps.append(dep)
-            # add to base dependencies
-            if base_deps is None:
-                base_deps = replay_deps
-            else:
-                base_deps += replay_deps
-
-        # load rendering network (for loss)
-        if self.oparam.params.get('use_hosyntax', 0):
-            rendnet.load_weights(self.sess, self.oparam.params.get('render_type', 'dense'))
-
-        with tf.name_scope("generator_train"):
-            gen_tvars = [
-                var for var in tf.trainable_variables()
-                if (re.search("generator", var.name) != None)
-            ]
-            for var in gen_tvars:
-                print('gen var %s' % var.name)
-            # gen_pre_tvars = list(filter(lambda var: 'gen' not in var.name and 'adapt' not in var.name, gen_tvars))
-
-            gen_deps = []
-            # if use_discr:
-            #     gen_deps.append(self.dis_train_op)
-            if base_deps is not None:
-                gen_deps.extend(base_deps)
-            else:
-                gen_deps = None
-
-            # must ensure that discriminator is done
-            with tf.control_dependencies(gen_deps):
-                self.gen_train_op = create_train_op(lr,
-                                self.tf_models.loss_total_gene, gen_tvars, self.step)
-                # self.gen_pretrain_op = create_train_op(lr,
-                    # self.tf_models.loss_main_gene, gen_pre_tvars, self.step)
-
+        
+        # Create learning rate schedule
+        lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate=self.oparam.learning_rate,
+            decay_steps=self.oparam.params.get('decay_steps', 50000),
+            decay_rate=self.oparam.params.get('decay_rate', 0.3),
+            staircase=True)
+        
+        # Initialize optimizers with TF2 style
+        self.gen_optimizer = tf.keras.optimizers.Adam(
+            learning_rate=lr_schedule, beta_1=0.5, epsilon=1e-4)
+        
         if use_discr:
-            dis_deps = []
-            if gen_deps is not None:
-                dis_deps.extend(gen_deps)
-            dis_deps.append(self.gen_train_op)
-
-            with tf.name_scope("discriminator_train"):
-                dis_tvars = [
-                    var for var in tf.trainable_variables()
-                    if (re.search("discriminator", var.name) != None)
-                ]
-                for var in dis_tvars:
-                    print('dis var %s' % var.name)
-
-                # we must ensure that base dependencies are met
-                with tf.control_dependencies(dis_deps):
-                    self.dis_train_op = create_train_op(lr * 0.5,
-                                    self.tf_models.loss_total_disc, dis_tvars, None)
-
-
-        # summaries for Tensorboard
-        self.summaries['scalar']['learning_rate'] = tf.summary.scalar('learning_rate', lr)
-        # images_summary = tf.summary.merge(self.summaries['images'].values())
-        loss_summary = tf.summary.merge(list(self.summaries['scalar'].values()))
-        val1_summary = tf.summary.merge(list(self.summaries['images'].values()) + [loss_summary])
-        val2_summary = tf.summary.merge_all()
-
-        train_writer = tf.summary.FileWriter(self.oparam.checkpoint_dir + '/train', self.sess.graph)
-        val_writer   = tf.summary.FileWriter(self.oparam.checkpoint_dir + '/val', self.sess.graph)
-
-        # Training start
-        tf.local_variables_initializer().run() # for metrics (accuracy)
-        tf.global_variables_initializer().run() # for network parameters
+            self.dis_optimizer = tf.keras.optimizers.Adam(
+                learning_rate=lr_schedule * 0.5, beta_1=0.5, epsilon=1e-4)
         
+        # Set up checkpoint management
+        checkpoint_dir = self.oparam.checkpoint_dir
+        checkpoint = tf.train.Checkpoint(
+            gen_optimizer=self.gen_optimizer,
+            model=self  # Save the whole model
+        )
+        if use_discr:
+            checkpoint.dis_optimizer = self.dis_optimizer
+            
+        checkpoint_manager = tf.train.CheckpointManager(
+            checkpoint, checkpoint_dir, max_to_keep=5)
         
-        ## Save all the parameters
-        self.load(self.oparam.checkpoint_dir)
-        with open(os.path.join(self.oparam.checkpoint_dir, 
-                                'params.pkl'), 'wb') as f:
+        # Restore checkpoint if exists
+        if checkpoint_manager.latest_checkpoint:
+            checkpoint.restore(checkpoint_manager.latest_checkpoint)
+            print(f"Restored from {checkpoint_manager.latest_checkpoint}")
+        
+        # Set up tensorboard logging
+        train_log_dir = os.path.join(checkpoint_dir, 'train')
+        val_log_dir = os.path.join(checkpoint_dir, 'val')
+        train_summary_writer = tf.summary.create_file_writer(train_log_dir)
+        val_summary_writer = tf.summary.create_file_writer(val_log_dir)
+        
+        # Save parameters
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        with open(os.path.join(checkpoint_dir, 'params.pkl'), 'wb') as f:
             pickle.dump(self.oparam.params, f)
-
+        
         start_time = time.time()
-        start_iter = int(self.step.eval() + 1)
-
-        train_setup = { self.batch_handle: self.train_handle }
-        val_setup   = { self.batch_handle: self.val_handle }
-
         global_step = 0
-
+        
+        print("Starting TF2 training...")
+        
         while global_step < self.oparam.max_iter:
             try:
-                # Training the network
-                global_step = tf.train.global_step(self.sess, tf.train.get_global_step())
-
-                # save the intermediate model
-                if global_step != 0 and global_step % 10000 == 0:
-                    self.save(self.oparam.checkpoint_dir, tf.train.get_global_step())
-
-                # Status check with validation data
-                if global_step !=0 and global_step % 500 == 0:
-                    # single validation step
-                    if global_step % 1000 == 0:
-                        val_summary = val2_summary
-                    else:
-                        val_summary = val1_summary
-
-                    # compute validation summary and loss information
-                    if use_discr:
-                        summary_str, loss_probe_d, loss_probe_g = self.sess.run([
-                            val_summary,
-                            self.tf_models.loss_total_disc,
-                            self.tf_models.loss_total_gene
-                        ], feed_dict = val_setup)
-                    else:
-                        loss_probe_d = 0
-                        summary_str, loss_probe_g = self.sess.run([
-                            val_summary,
-                            self.tf_models.loss_total_gene
-                        ], feed_dict = val_setup)
-                    val_writer.add_summary(summary_str, global_step)
-
-                    print("Iter: [%2d/%7d] time: %4.4f, vloss: [d %.4f, g %.4f]"
-                        % (global_step, self.oparam.max_iter, time.time() - start_time, loss_probe_d, loss_probe_g))
-
-                # training operation
-                if use_discr:
-                    # Run generator N passes
-                    # if global_step == 0:
-                    #     # for _ in range(199):
-                    #         # print('.')
-                    #     _ = self.sess.run([self.gen_train_op], feed_dict = train_setup)
-                    # else:
-                    Ngen = int(self.oparam.params.get('gen_passes', 2.0))
-                    for g in range(Ngen):
-                        _ = self.sess.run([self.gen_train_op], feed_dict = train_setup)
-
-                    # Run generator+discriminator pass
-#                     if global_step >= 5000:
-                        # for iter in range(10): # Warm start discrimantor
-                    _ = self.sess.run([self.dis_train_op], feed_dict = train_setup)
-                    # else:
-                        # _ = self.sess.run([self.dis_train_op], feed_dict = train_setup)
-
-                    if global_step % 100 == 0:
-                        summary_str, loss_tr_d, loss_tr_g = self.sess.run([
-                            loss_summary,
-                            self.tf_models.loss_total_disc,
-                            self.tf_models.loss_total_gene,
-                        ], feed_dict = train_setup)
-                    else:
-                        loss_tr_d, loss_tr_g = self.sess.run([
-                        self.tf_models.loss_total_disc,
-                        self.tf_models.loss_total_gene,
-                        ], feed_dict = train_setup)
-                else:
-                    loss_tr_d = 0.0
-                    summary_str, loss_tr_g, _ = self.sess.run([
-                        loss_summary,
-                        self.tf_models.loss_total_gene,
-                        self.gen_train_op
-                    ], feed_dict = train_setup)
-                
-
-                # Status check with training data
-                if global_step % 10 < 1:
-                    '''
-                    print("Iter: [%2d/%7d] time: %4.4f, loss: [d %.4f, g %.4f]" %
-                          (global_step, self.oparam.max_iter, time.time() - start_time,
-                           loss_tr_d, loss_tr_g))
-                    '''
-                    print("Iter: [%2d/%7d] time: %4.4f, loss: [d %.4f, g %.4f]" %
-                          (global_step, self.oparam.max_iter, time.time() - start_time, loss_tr_d, loss_tr_g))
-
-                if global_step % 100 == 0:
-                    train_writer.add_summary(summary_str, global_step)
+                # Get training batch
+                train_data = self.loader.get_train_batch()
+                if train_data is None:
+                    break
                     
-                # Flush summary
-                # writer.flush()
-            except tf.errors.OutOfRangeError: # if data loader is done
+                X_in, Y_out = train_data
+                
+                # Training step
+                gen_loss, dis_loss = self._train_step(X_in, Y_out, use_discr)
+                
+                global_step += 1
+                
+                # Validation and logging
+                if global_step % 500 == 0:
+                    val_data = self.loader.get_val_batch()
+                    if val_data is not None:
+                        val_X, val_Y = val_data
+                        val_gen_loss, val_dis_loss = self._val_step(val_X, val_Y, use_discr)
+                        
+                        with val_summary_writer.as_default():
+                            tf.summary.scalar('generator_loss', val_gen_loss, step=global_step)
+                            if use_discr:
+                                tf.summary.scalar('discriminator_loss', val_dis_loss, step=global_step)
+                        
+                        print(f"Iter: [{global_step}/{self.oparam.max_iter}] time: {time.time() - start_time:.4f}, "
+                              f"vloss: [d {val_dis_loss:.4f}, g {val_gen_loss:.4f}]")
+                
+                # Training logging
+                if global_step % 100 == 0:
+                    with train_summary_writer.as_default():
+                        tf.summary.scalar('generator_loss', gen_loss, step=global_step)
+                        if use_discr:
+                            tf.summary.scalar('discriminator_loss', dis_loss, step=global_step)
+                        tf.summary.scalar('learning_rate', lr_schedule(global_step), step=global_step)
+                
+                # Progress logging
+                if global_step % 10 == 0:
+                    print(f"Iter: [{global_step}/{self.oparam.max_iter}] time: {time.time() - start_time:.4f}, "
+                          f"loss: [d {dis_loss:.4f}, g {gen_loss:.4f}]")
+                
+                # Save checkpoint
+                if global_step % 10000 == 0:
+                    checkpoint_manager.save()
+                    
+            except Exception as e:
+                print(f"Training interrupted: {e}")
                 break
-
-
+        
         print('Training ends.')
-        self.save(self.oparam.checkpoint_dir, global_step)
-
-        train_writer.close()
-        val_writer.close()
+        checkpoint_manager.save()
+        
+    @tf.function
+    def _train_step(self, X_in, Y_out, use_discr):
+        """Single training step with gradient tape"""
+        
+        # Generator training
+        with tf.GradientTape() as gen_tape:
+            # Forward pass
+            net, loss_dict_disc, loss_dict_gene, metrics = self.model_define(
+                X_in=X_in, Y_out=Y_out, is_train=True)
+            gen_loss = loss_dict_gene['total']
+        
+        # Get generator variables
+        gen_vars = [var for var in self.trainable_variables 
+                   if 'generator' in var.name]
+        
+        # Apply generator gradients
+        gen_grads = gen_tape.gradient(gen_loss, gen_vars)
+        self.gen_optimizer.apply_gradients(zip(gen_grads, gen_vars))
+        
+        dis_loss = tf.constant(0.0)
+        
+        # Discriminator training (if enabled)
+        if use_discr:
+            with tf.GradientTape() as dis_tape:
+                # Forward pass for discriminator
+                net, loss_dict_disc, loss_dict_gene, metrics = self.model_define(
+                    X_in=X_in, Y_out=Y_out, is_train=True)
+                dis_loss = loss_dict_disc['total']
+            
+            # Get discriminator variables
+            dis_vars = [var for var in self.trainable_variables 
+                       if 'discriminator' in var.name]
+            
+            # Apply discriminator gradients
+            dis_grads = dis_tape.gradient(dis_loss, dis_vars)
+            self.dis_optimizer.apply_gradients(zip(dis_grads, dis_vars))
+        
+        return gen_loss, dis_loss
+    
+    @tf.function
+    def _val_step(self, X_in, Y_out, use_discr):
+        """Validation step without gradient computation"""
+        
+        # Forward pass only
+        net, loss_dict_disc, loss_dict_gene, metrics = self.model_define(
+            X_in=X_in, Y_out=Y_out, is_train=False)
+        
+        gen_loss = loss_dict_gene['total']
+        dis_loss = loss_dict_disc['total'] if use_discr else tf.constant(0.0)
+        
+        return gen_loss, dis_loss
 
     def test_imgs(self, fnames_img, name="test_imgs"):
         pass
 
     def test(self, name="test"):
-        tf.global_variables_initializer().run() # for network parameters
-        self.load(self.oparam.checkpoint_dir, True)
+        """Test method using TF2 eager execution"""
+        
+        # Load checkpoint
+        checkpoint_dir = self.oparam.checkpoint_dir
+        checkpoint = tf.train.Checkpoint(model=self)
+        checkpoint_manager = tf.train.CheckpointManager(
+            checkpoint, checkpoint_dir, max_to_keep=5)
+        
+        if checkpoint_manager.latest_checkpoint:
+            checkpoint.restore(checkpoint_manager.latest_checkpoint)
+            print(f"Restored from {checkpoint_manager.latest_checkpoint}")
+        else:
+            print("No checkpoint found, using randomly initialized weights")
         
         import cv2
         def fn_rescaleimg(x):
             x += 0.5
-            x[x > 1] = 1.
-            x[x < 0] = 0.
-            return x*255.
-            
+            x = tf.clip_by_value(x, 0.0, 1.0)
+            return x * 255.0
         
-        svpath = os.path.join(self.oparam.checkpoint_dir, 'eval')
-        fn_path = lambda x: os.path.join(svpath, x)
-        if not os.path.exists(svpath):
-            os.makedirs(svpath)
-
-        test_setup = { self.batch_handle: self.test_handle }
+        svpath = os.path.join(checkpoint_dir, 'eval')
+        os.makedirs(svpath, exist_ok=True)
         
-        lst_eval_tensors = [
-            self.input_names, # file name (no extension)
-            self.tf_models.net.instr['real'], # output label map 20x20x1
-            tf.nn.softmax(self.tf_models.net.logits['real']), # softmax of logits 20x20x17
-        ]
-        if 'real' in self.tf_models.net.resi_outs.keys():
-            lst_eval_tensors.append(self.tf_models.net.resi_outs['real']) # regul image 160x160x1
-            sgpath = os.path.join(svpath, 'gen')
-            if not os.path.exists(sgpath):
-                os.makedirs(sgpath)
+        gen_path = os.path.join(svpath, 'gen')
+        os.makedirs(gen_path, exist_ok=True)
         
         cnt1 = 0
         cnt2 = 0
-
+        
         show_info = self.oparam.params.get('show_confidence', 0)
-        while 1:
+        
+        print("Starting TF2 inference...")
+        
+        # Process test data
+        for test_batch in self.loader.get_test_data():
             try:
-                rst = self.sess.run(lst_eval_tensors, feed_dict = test_setup)
-                names = rst[0]
-                labels = rst[1]
-                probs = rst[2]
-
-                for i in range(names.shape[0]):
-                    fname = str(names[i], encoding='utf-8')
-                    if show_info:
-                        p = probs[i] # p is 20x20x17
-                        max_p = np.amax(p, axis = -1)
-                        conf_mean = np.mean(max_p)
-                        conf_std  = np.std(max_p)
-                        print('%d %s (conf: m=%f, s=%f)' % (cnt1 + 1, fname, conf_mean, conf_std))
-                    else:
-                        sys.stdout.write("\r%d %s" % (cnt1 + 1, fname))
-                        sys.stdout.flush()
-                    fpath = os.path.join(svpath, fname + '.png')
-                    save_instr(fpath, labels[i])
-
-                    # cv2.imwrite(fpath, rst[1][i])
-                    cnt1 += 1
-                    if 'real' in self.tf_models.net.resi_outs.keys():
-                        regul = rst[3]
-                        fpath = os.path.join(sgpath, fname + '.png')
-                        cv2.imwrite(fpath, fn_rescaleimg(regul[i]))
-                        cnt2 += 1
-
-                # ## Do something with rst
-                # for eachimg in rst[0]:
-                #     curfname = fn_path('inst_%06d.png' % (cnt1))
-                #     cv2.imwrite(curfname, eachimg)
-                #     cnt1 += 1
+                X_in, names = test_batch
                 
-                    # # generated image
-                # if 'real' in self.tf_models.net.resi_outs.keys():
-                    # for eachimg in rst[1]:
-                    #     curfname = fn_path('gen_%06d.png' % (cnt2))
-                    #     cv2.imwrite(curfname, fn_rescaleimg(eachimg))
-                    #     cnt2 += 1
+                # Forward pass for inference
+                net, _, _, _ = self.model_define(X_in=X_in, Y_out={}, is_train=False)
+                
+                # Get outputs
+                if 'real' in net.instr:
+                    labels = net.instr['real']
+                    logits = net.logits['real']
+                    probs = tf.nn.softmax(logits)
                     
-
-            except tf.errors.OutOfRangeError: # if data loader is done
+                    # Process each sample in batch
+                    for i in range(tf.shape(names)[0]):
+                        fname = names[i].numpy().decode('utf-8') if hasattr(names[i], 'numpy') else str(names[i])
+                        
+                        if show_info:
+                            p = probs[i].numpy()  # p is 20x20x17
+                            max_p = np.amax(p, axis=-1)
+                            conf_mean = np.mean(max_p)
+                            conf_std = np.std(max_p)
+                            print(f'{cnt1 + 1} {fname} (conf: m={conf_mean:.6f}, s={conf_std:.6f})')
+                        else:
+                            print(f"\r{cnt1 + 1} {fname}", end='', flush=True)
+                        
+                        # Save instruction map
+                        fpath = os.path.join(svpath, fname + '.png')
+                        save_instr(fpath, labels[i].numpy())
+                        cnt1 += 1
+                        
+                        # Save generated image if available
+                        if 'real' in net.resi_outs:
+                            regul = net.resi_outs['real']
+                            fpath = os.path.join(gen_path, fname + '.png')
+                            regul_img = fn_rescaleimg(regul[i]).numpy().astype(np.uint8)
+                            cv2.imwrite(fpath, regul_img)
+                            cnt2 += 1
+                            
+            except Exception as e:
+                print(f"Error processing batch: {e}")
                 break
-
+        
         print('\nProcessing Done!')
+        print(f'Processed {cnt1} instruction maps')
+        if cnt2 > 0:
+            print(f'Generated {cnt2} images')
         return
     
     def load_params(self, needed = False):
