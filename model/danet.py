@@ -18,23 +18,25 @@ from .layer_modules import prog_ch, tf_MILloss_xentropy, tf_loss_xentropy, tf_MI
 
 def conv2d(input_, output_dim, ks=3, s=2, stddev=0.02, padding='VALID', name="conv2d"):
     
-    with tf.variable_scope(name, reuse=tf.AUTO_REUSE):
+    with tf.name_scope(name):
         padsz = math.ceil((ks - s) * 0.5)
         if padsz != 0:
             input_ = tf.pad(input_,
                         tf.constant([[0, 0], [padsz, padsz], [padsz, padsz], [0, 0]]),
         mode='SYMMETRIC')
-        return slim.conv2d(input_, output_dim, ks, s, padding=padding,
-                            activation_fn=None,
-                            weights_initializer=tf.truncated_normal_initializer(stddev=stddev)
-                            # biases_initializer=None
-                            )
+        return tf.keras.layers.Conv2D(
+            output_dim, ks, strides=s, padding=padding.lower(),
+            activation=None,
+            kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=stddev)
+        )(input_)
+
 def deconv2d(input_, output_dim, ks=4, s=2, stddev=0.02, name="deconv2d"):
-    with tf.variable_scope(name, reuse=tf.AUTO_REUSE):
-        return slim.conv2d_transpose(input_, output_dim, ks, s, padding='SAME',                            activation_fn=None,
-                            weights_initializer=tf.truncated_normal_initializer(stddev=stddev)
-                            # biases_initializer=None
-                            )
+    with tf.name_scope(name):
+        return tf.keras.layers.Conv2DTranspose(
+            output_dim, ks, strides=s, padding='same',
+            activation=None,
+            kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=stddev)
+        )(input_)
 
 def discriminator(image, params = dict(), name="discriminator"):
 

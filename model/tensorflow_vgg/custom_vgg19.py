@@ -20,7 +20,7 @@ class Vgg19(vgg19.Vgg19):
         print('build model started')
 
         net = dict()
-        with tf.variable_scope('vgg19', reuse=tf.AUTO_REUSE):
+        with tf.name_scope('vgg19'):
             gray_scaled = (gray+0.5) * 255.0
 
             # Convert RGB to BGR
@@ -88,7 +88,7 @@ class Vgg16(vgg16.Vgg16):
         print('build model started')
 
         net = dict()
-        with tf.variable_scope('vgg16', reuse=tf.AUTO_REUSE):
+        with tf.name_scope('vgg16'):
             gray_scaled = (gray+0.5) * 255.0
 
             # Convert RGB to BGR

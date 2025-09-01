@@ -96,7 +96,7 @@ class Vgg19:
         return tf.nn.max_pool(bottom, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME', name=name)
 
     def conv_layer(self, bottom, in_channels, out_channels, name):
-        with tf.variable_scope(name):
+        with tf.name_scope(name):
             filt, conv_biases = self.get_conv_var(3, in_channels, out_channels, name)
 
             conv = tf.nn.conv2d(bottom, filt, [1, 1, 1, 1], padding='SAME')
@@ -106,7 +106,7 @@ class Vgg19:
             return relu
 
     def fc_layer(self, bottom, in_size, out_size, name):
-        with tf.variable_scope(name):
+        with tf.name_scope(name):
             weights, biases = self.get_fc_var(in_size, out_size, name)
 
             x = tf.reshape(bottom, [-1, in_size])

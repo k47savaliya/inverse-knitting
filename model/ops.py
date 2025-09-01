@@ -308,15 +308,15 @@ def conv2d(input_,
            stddev=0.02,
            t_padding='SAME',
            name="conv2d"):
-    with tf.variable_scope(name):
-        w = tf.get_variable(
-            'weight', [k_h, k_w, input_.get_shape()[-1], output_dim],
-            initializer=tf.contrib.layers.xavier_initializer_conv2d())
+    with tf.name_scope(name):
+        w = tf.Variable(
+            tf.keras.initializers.GlorotUniform()([k_h, k_w, input_.get_shape()[-1], output_dim]),
+            name='weight')
         conv = tf.nn.conv2d(
             input_, w, strides=[1, d_h, d_w, 1], padding='SAME')
 
-        biases = tf.get_variable(
-            'biases', [output_dim], initializer=tf.constant_initializer(0.0))
+        biases = tf.Variable(
+            tf.zeros([output_dim]), name='biases')
         # conv = tf.reshape(tf.nn.bias_add(conv, biases), conv.get_shape())
         conv = tf.reshape(tf.nn.bias_add(conv, biases), tf.shape(conv))
 
