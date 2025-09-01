@@ -10,7 +10,6 @@ import pdb
 from .nnlib import *
 from .parameters import arch_para, hparams, Parameters
 from util import read_image, comp_confusionmat
-import tensorflow.contrib.slim as slim
 
 from .tensorflow_vgg import custom_vgg19
 from .layer_modules import prog_ch, tf_MILloss_xentropy, tf_loss_xentropy, tf_MILloss_accuracy, tf_background, syntax_loss, tf_accuracy, create_canonical_coordinates, oper_random_geo_perturb, oper_img2img, style_layer_loss, tf_frequency_weight, oper_img2prog_final, oper_img2img_bottleneck, oper_img2prog_final_complex
