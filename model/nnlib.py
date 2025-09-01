@@ -104,14 +104,14 @@ def loss_huber(labels, predictions, delta=1.0):
 
 
 def avgpool(h, s=2, k=2):
-    h = tf.contrib.layers.avg_pool2d(
-        h, kernel_size=k, stride=s, padding='VALID')
+    h = tf.nn.avg_pool2d(
+        h, ksize=k, strides=s, padding='VALID')
     return h
 
 
 def maxpool(h, s=2, k=2):
-    h = tf.contrib.layers.max_pool2d(
-        h, kernel_size=k, stride=s, padding='SAME')
+    h = tf.nn.max_pool2d(
+        h, ksize=k, strides=s, padding='SAME')
     return h
 
 
@@ -133,13 +133,13 @@ def conv_pad(h, n=64, s=1, k=3):
         h,
         tf.constant([[0, 0], [padsz, padsz], [padsz, padsz], [0, 0]]),
         mode='SYMMETRIC')
-    h = tf.contrib.layers.convolution2d(
-        h, n, kernel_size=k, stride=s, padding='VALID', activation_fn=None)
+    h = tf.keras.layers.Conv2D(
+        n, kernel_size=k, strides=s, padding='valid', activation=None)(h)
     return h
 
 def conv_valid(h, n=64, s=1, k=3):
-    h = tf.contrib.layers.convolution2d(
-        h, n, kernel_size=k, stride=s, padding='VALID', activation_fn=None)
+    h = tf.keras.layers.Conv2D(
+        n, kernel_size=k, strides=s, padding='valid', activation=None)(h)
     return h
 
 
@@ -153,31 +153,28 @@ def conv(h, n=64, s=1, k=3, w_initializer=None, w_normalization=True):
         n = h.get_shape()[-1] # use input's shape
     
     if w_initializer is None:
-        h = tf.contrib.layers.convolution2d(
-            h, n, kernel_size=k, stride=s, padding='SAME', activation_fn=None)
+        h = tf.keras.layers.Conv2D(
+            n, kernel_size=k, strides=s, padding='same', activation=None)(h)
     else:
-        h = tf.contrib.layers.convolution2d(
-            h,
+        h = tf.keras.layers.Conv2D(
             n,
             kernel_size=k,
-            stride=s,
-            padding='SAME',
-            activation_fn=None,
-            weights_initializer=w_initializer)
+            strides=s,
+            padding='same',
+            activation=None,
+            kernel_initializer=w_initializer)(h)
 
     return h
 
 
 def fc(h, n=1024, w_initializer=None):
     if w_initializer is None:
-        h = tf.contrib.layers.fully_connected(
-            tf.contrib.layers.flatten(h), num_outputs=n, activation_fn=None)
+        h = tf.keras.layers.Dense(n, activation=None)(tf.keras.layers.Flatten()(h))
     else:
-        h = tf.contrib.layers.fully_connected(
-            tf.contrib.layers.flatten(h),
-            num_outputs=n,
-            activation_fn=None,
-            weights_initializer=w_initializer)
+        h = tf.keras.layers.Dense(
+            n,
+            activation=None,
+            kernel_initializer=w_initializer)(tf.keras.layers.Flatten()(h))
     return h
 
 def_runit = 'relu'
@@ -243,22 +240,22 @@ def runit(h, rtype = None):
         out = pixel_norm(out)
     elif rtype == 'relu_in':
         out = relu(h)
-        out = tf.contrib.layers.instance_norm(out)
+        out = tf.keras.utils.normalize(out, axis=-1)  # Approximate instance norm
     elif rtype == 'in_relu':
-        out = tf.contrib.layers.instance_norm(h,
-            scale = False, activation_fn = relu)
+        out = tf.keras.utils.normalize(h, axis=-1)  # Approximate instance norm
+        out = relu(out)
     elif rtype == 'lrelu_in':
         out = lrelu(h)
-        out = tf.contrib.layers.instance_norm(out)
+        out = tf.keras.utils.normalize(out, axis=-1)  # Approximate instance norm
     elif rtype == 'in_lrelu':
-        out = tf.contrib.layers.instance_norm(h,
-            scale = False, activation_fn = lrelu)
+        out = tf.keras.utils.normalize(h, axis=-1)  # Approximate instance norm
+        out = lrelu(out)
     elif rtype == 'bn_relu':
-        out = tf.contrib.layers.batch_norm(h,
-            decay = 0.9, scale = False, activation_fn = relu, is_training = True)
+        out = tf.keras.layers.BatchNormalization()(h)
+        out = relu(out)
     elif rtype == 'bn_relu_test':
-        out = tf.contrib.layers.batch_norm(h,
-            decay = 0.9, scale = False, activation_fn = relu, is_training = False)
+        out = tf.keras.layers.BatchNormalization(training=False)(h)
+        out = relu(out)
     elif rtype == 'glu':
         # gated linear unit
         # @see https://arxiv.org/abs/1612.08083
@@ -279,8 +276,8 @@ def runit(h, rtype = None):
 
 def in_relu(h):
     print('in_relu')
-    h = tf.contrib.layers.instance_norm(h,
-            scale = False, activation_fn = relu)
+    h = tf.keras.utils.normalize(h, axis=-1)  # Approximate instance norm
+    h = relu(h)
     return h
 
 def relu(h):
@@ -340,20 +337,20 @@ def grp_norm(h, ngroup=32, invaxis=(-3, -2)):
 
 
 def batch_norm(h, is_training=True, scale=True):
-    # h = contribut_group_norm(h, groups = ngroup)
-    h = tf.contrib.layers.batch_norm(
-        h, decay=0.9, scale=scale, is_training=is_training)
+    h = tf.keras.layers.BatchNormalization(
+        scale=scale)(h, training=is_training)
     return h
 
 
 def inst_norm(h, name='inst_norm'):
-    with tf.variable_scope(name):
-        h = tf.contrib.layers.instance_norm(h)
+    with tf.name_scope(name):
+        # Approximate instance normalization using layer normalization
+        h = tf.keras.utils.normalize(h, axis=-1)
     return h
 
 def pixel_norm(x, epsilon=1e-8):
-    with tf.variable_scope('PixelNorm'):
-        return x * tf.rsqrt(tf.reduce_mean(tf.square(x), axis=3, keepdims=True) + epsilon)
+    with tf.name_scope('PixelNorm'):
+        return x * tf.math.rsqrt(tf.reduce_mean(tf.square(x), axis=3, keepdims=True) + epsilon)
 
 # def upsample(h):
 #     # dynamic shape version

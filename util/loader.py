@@ -7,7 +7,6 @@ from math import ceil
 
 import tensorflow as tf
 from tensorflow.data import Dataset, TextLineDataset
-from tensorflow.contrib.data import shuffle_and_repeat
 
 from time import gmtime, strftime
 from skimage.transform import warp, AffineTransform
@@ -143,7 +142,7 @@ class Loader(object):
                 return fakes + [inst]
 
             synt_types = [tf.float32 for _ in self.fakes] + [tf.int32]
-            synt = synt.map(lambda name: tf.py_func(name2synt, [name], synt_types), num_parallel_calls = num_threads)
+            synt = synt.map(lambda name: tf.py_function(name2synt, [name], synt_types), num_parallel_calls = num_threads)
 
             # real data
             augment = self.params.get('augment', 1)
@@ -161,7 +160,7 @@ class Loader(object):
                 else:
                     real = read_image(os.path.join(real_dir, name.decode() + '.jpg'))
                 return real, inst
-            real = real.map(lambda name: tuple(tf.py_func(name2real, [name], [tf.float32, tf.int32])), num_parallel_calls = num_threads)
+            real = real.map(lambda name: tuple(tf.py_function(name2real, [name], [tf.float32, tf.int32])), num_parallel_calls = num_threads)
 
             # unsup data
             def name2unsup(name):
@@ -220,7 +219,7 @@ class Loader(object):
                 else:
                     real = read_image(os.path.join(real_dir, '160x160', 'gray', name.decode() + '.jpg'))
                 return real, inst, name.decode()
-            real = real.map(lambda name: tuple(tf.py_func(name2real, [name], [tf.float32, tf.int32, tf.string])), num_parallel_calls = num_threads)
+            real = real.map(lambda name: tuple(tf.py_function(name2real, [name], [tf.float32, tf.int32, tf.string])), num_parallel_calls = num_threads)
 
             #dataset = Dataset.zip((rend, xfer, real, inst_synt, inst_real))
             dataset = Dataset.zip({ 'real': real })

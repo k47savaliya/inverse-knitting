@@ -1,4 +1,5 @@
 import os
+import argparse
 import tensorflow as tf
 import numpy as np
 from model import FeedForwardNetworks
@@ -20,58 +21,71 @@ def_component   = ''
 def_runit       = 'relu'
 def_gram_layers = ''
 
-flags = tf.app.flags
-flags.DEFINE_float("learning_rate", def_learn_rate,     "Learning rate of for adam")
-flags.DEFINE_integer("max_iter", def_max_iter,          "The size of total iterations")
-flags.DEFINE_integer("batch_size", def_batch_size,      "The size of batch images")
-flags.DEFINE_integer("image_size", def_im_size,         "The size of width or height of image to use")
-flags.DEFINE_integer("threads", def_threads,            "The number of threads to use in the data pipeline")
-flags.DEFINE_string("dataset", def_datapath,            "The dataset base directory")
-flags.DEFINE_integer("seed", def_seed,                  "Random seed number")
-flags.DEFINE_string("model_type", def_model_type,       "The type of model")
-flags.DEFINE_string("checkpoint_dir", def_ckpt_dir,     "Directory name to save the checkpoints")
-flags.DEFINE_boolean("training", def_training,          "True for training, False for testing")
-flags.DEFINE_list("params", def_params,                 "Parameter map")
-flags.DEFINE_list("weights", def_weights,               "Weight map")
-flags.DEFINE_string("component", def_component,         "Component to train (all by default), "
-                    + "valid values include: transfer | norendering | warping | nuclear | none")
-flags.DEFINE_list("gram_layers", def_gram_layers,       "List of layers for the gram loss")
-FLAGS = flags.FLAGS
+def create_parser():
+    parser = argparse.ArgumentParser(description='Neural Inverse Knitting')
+    parser.add_argument("--learning_rate", type=float, default=def_learn_rate, 
+                       help="Learning rate of for adam")
+    parser.add_argument("--max_iter", type=int, default=def_max_iter,
+                       help="The size of total iterations")
+    parser.add_argument("--batch_size", type=int, default=def_batch_size,
+                       help="The size of batch images")
+    parser.add_argument("--image_size", type=int, default=def_im_size,
+                       help="The size of width or height of image to use")
+    parser.add_argument("--threads", type=int, default=def_threads,
+                       help="The number of threads to use in the data pipeline")
+    parser.add_argument("--dataset", type=str, default=def_datapath,
+                       help="The dataset base directory")
+    parser.add_argument("--seed", type=int, default=def_seed,
+                       help="Random seed number")
+    parser.add_argument("--model_type", type=str, default=def_model_type,
+                       help="The type of model")
+    parser.add_argument("--checkpoint_dir", type=str, default=def_ckpt_dir,
+                       help="Directory name to save the checkpoints")
+    parser.add_argument("--training", action="store_true", default=def_training,
+                       help="True for training, False for testing")
+    parser.add_argument("--params", nargs='*', default=def_params,
+                       help="Parameter map")
+    parser.add_argument("--weights", nargs='*', default=def_weights,
+                       help="Weight map")
+    parser.add_argument("--component", type=str, default=def_component,
+                       help="Component to train (all by default), "
+                            + "valid values include: transfer | norendering | warping | nuclear | none")
+    parser.add_argument("--gram_layers", nargs='*', default=def_gram_layers,
+                       help="List of layers for the gram loss")
+    return parser
 
 model_dict = {
     "Forward": FeedForwardNetworks
 }
 
-def main(_):
+def main():
+    # Parse arguments
+    parser = create_parser()
+    FLAGS = parser.parse_args()
+    
     if not os.path.exists(FLAGS.checkpoint_dir):
-    	os.makedirs(FLAGS.checkpoint_dir)
+        os.makedirs(FLAGS.checkpoint_dir)
     if not os.path.exists(FLAGS.checkpoint_dir + '/train'):
         os.makedirs(FLAGS.checkpoint_dir + '/train')
     if not os.path.exists(FLAGS.checkpoint_dir + '/val'):
         os.makedirs(FLAGS.checkpoint_dir + '/val')
 
     NNModel = model_dict[FLAGS.model_type]
-    tf.set_random_seed(FLAGS.seed)
+    tf.random.set_seed(FLAGS.seed)
     np.random.seed(FLAGS.seed)
 
-    # Set up tf session and initialize variables. 
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth = True
-    config.allow_soft_placement=True      
-    # config.log_device_placement=True
-    
-    with tf.Session(config=config) as sess:
-        for key, val in FLAGS.flag_values_dict().items():
-            pp.pprint([key, getattr(FLAGS, key)])
+    # Print configuration
+    for key, value in vars(FLAGS).items():
+        pp.pprint([key, value])
 
-        # object generation
-        obj_model = NNModel(sess, tf_flag = FLAGS)
+    # object generation - no more sessions in TF2
+    obj_model = NNModel(tf_flag = FLAGS)
 
-        # Train or Test
-        if FLAGS.training:
-            obj_model.train()
-        else:
-            obj_model.test()
+    # Train or Test
+    if FLAGS.training:
+        obj_model.train()
+    else:
+        obj_model.test()
 
 if __name__ == '__main__':
-    tf.app.run()
+    main()

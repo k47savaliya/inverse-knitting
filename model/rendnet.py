@@ -7,7 +7,6 @@ import numpy as np
 import scipy
 import re
 import pdb
-import tensorflow.contrib.slim as slim
 from .nnlib import *
 from .parameters import arch_para, hparams, Parameters
 from util import read_image, comp_confusionmat
@@ -18,9 +17,9 @@ from .layer_modules import prog_ch, tf_background, oper_prog2img
 def dense_prog2img(t_input, params, name = 'prog2img'):
     feat_ch = int(params.get('feat_ch', 64))
     convfn = lambda x,n: conv_pad(x, n)
-    with tf.variable_scope(name, reuse=tf.AUTO_REUSE):
+    with tf.name_scope(name):
         features = []
-        with tf.variable_scope('decoder1', reuse = False):
+        with tf.name_scope('decoder1'):
             # pdb.set_trace()
             t_feat = runit(convfn(t_input, feat_ch))
             for i in range(3):
@@ -41,7 +40,7 @@ def resnet_prog2img(t_input, params, name = 'prog2img'):
     rblk_num = int(params.get('rblk_num', 3))
     with tf.name_scope('upsampling'):
         t_input = upsample(t_input, False, 8)
-    with tf.variable_scope(name, reuse=tf.AUTO_REUSE):
+    with tf.name_scope(name):
         t_feat1 = NN('decoder1',
             [t_input, [convfn, feat_ch], [runit]])
         t_feat2 = NN('decoder2',
@@ -57,7 +56,7 @@ def network(t_label, params = dict(), output_layers = False, input_is_softmax = 
     render_type = params.get('render_type', 'dense')
     render_layers = []
 
-    with tf.variable_scope(scope_name):
+    with tf.name_scope(scope_name):
         # convert to probabilistic one-hot input
         if input_is_softmax:
             t_input = t_label

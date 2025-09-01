@@ -219,7 +219,7 @@ def oper_global_warping(t_img, name='global_warp'):
             ])
         print('xform: ', xform_diff.get_shape())
         xform_diff = tf.reshape(xform_diff, [xform_diff.get_shape()[0], -1])
-        xform_diff = tf.contrib.layers.fully_connected(xform_diff, 6, scope='fc-1d')
+        xform_diff = tf.keras.layers.Dense(6, name='fc-1d')(xform_diff)
 
         # identity transformation
         batch_size = t_img.get_shape()[0]
@@ -248,7 +248,7 @@ def create_canonical_coordinates(batch_size, img_size, anchor_res):
 ###################################################################################################
 
 def oper_collapse(t_resi, params = dict(), name='collapse'):
-    with tf.variable_scope(name, reuse=tf.AUTO_REUSE):
+    with tf.name_scope(name):
         t_resi = global_pool(t_resi) # collapse into global information
         t_resi = tf.tile(t_resi, [1, 20, 20, 1]) # copy to each location
     return t_resi
@@ -259,12 +259,12 @@ def oper_img2prog(t_img, params = dict(), name='img2prog'):
     outputs those as well as the corresponding 20x20 argmax label prediction
     '''
     def dilated_conv(h, n=64, r=2, k=3):
-        h = tf.contrib.layers.convolution2d(h, n, 
-                                            kernel_size=k, 
-                                            rate=2, 
-                                            stride=1, 
-                                            padding='SAME', 
-                                            activation_fn=None)
+        h = tf.keras.layers.Conv2D(n, 
+                                   kernel_size=k, 
+                                   dilation_rate=2, 
+                                   strides=1, 
+                                   padding='same', 
+                                   activation=None)(h)
         return h
     
     feat_ch = int(params.get('feat_ch', 64))
@@ -1634,7 +1634,7 @@ def syntax_loss(instr, params, binary = False):
     return t_loss
 
 def debug(x, name = 'debug', dtype = tf.float32):
-    return tf.py_func(lambda t: check_tensor(t, name), [x], dtype)
+    return tf.py_function(lambda t: check_tensor(t, name), [x], dtype)
 
 def check_tensor(x, name):
     print(name)

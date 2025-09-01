@@ -85,68 +85,54 @@ def testcode_laplacian():
         np.ones([48, 48], dtype=np.float32)
     ], 1)
 
-    t_input = tf.placeholder(tf.float32, shape=[None, None])
-
-    t_input4d = tf_fn_expdim2to4(t_input, 0, -1)
-
-    t_lst_Lpyr = laplacian_pyr_decomposition(t_input4d, nscale=3)
-
-    t_ori_img = laplacian_pyr_reconstruction(t_lst_Lpyr)
-
-    with tf.Session() as sess:
-        init = tf.global_variables_initializer()
-        sess.run(init)
-
-        # exc_output = sess.run([t_lst_Lpyr[iscale] for iscale in range(len(t_lst_Lpyr))],
-        #              feed_dict={t_input: cur_img})
-
-        exec_output = sess.run(t_ori_img, feed_dict={t_input: cur_img})
-        print(exec_output.shape)
-        print(np.squeeze(exec_output))
+    # Note: This test code needs to be updated for TF2 eager execution
+    # Remove placeholder and session usage for TF2 compatibility
+    @tf.function
+    def test_laplacian():
+        t_input4d = tf_fn_expdim2to4(tf.constant(cur_img, dtype=tf.float32), 0, -1)
+        t_lst_Lpyr = laplacian_pyr_decomposition(t_input4d, nscale=3)
+        t_ori_img = laplacian_pyr_reconstruction(t_lst_Lpyr)
+        return t_ori_img
+    
+    exec_output = test_laplacian()
+    print(exec_output.shape)
+    print(tf.squeeze(exec_output).numpy())
         print(np.sum(np.square(cur_img - np.squeeze(exec_output))))
 
 
 def instance_norm(input, name="instance_norm"):
-    with tf.variable_scope(name):
+    with tf.name_scope(name):
         depth = input.get_shape()[3]
-        scale = tf.get_variable(
-            "scale", [depth],
-            initializer=tf.random_normal_initializer(
-                1.0, 0.02, dtype=tf.float32))
-        offset = tf.get_variable(
-            "offset", [depth], initializer=tf.constant_initializer(0.0))
-        mean, variance = tf.nn.moments(input, axes=[1, 2], keep_dims=True)
+        scale = tf.Variable(
+            tf.random.normal([depth], mean=1.0, stddev=0.02, dtype=tf.float32),
+            name="scale")
+        offset = tf.Variable(
+            tf.zeros([depth]), name="offset")
+        mean, variance = tf.nn.moments(input, axes=[1, 2], keepdims=True)
         epsilon = 1e-5
-        inv = tf.rsqrt(variance + epsilon)
+        inv = tf.math.rsqrt(variance + epsilon)
         normalized = (input - mean) * inv
         return scale * normalized + offset
 
 
 class batch_norm(object):
-    # h1 = lrelu(tf.contrib.layers.batch_norm(conv2d(h0, self.df_dim*2, name='d_h1_conv'),decay=0.9,updates_collections=None,epsilon=0.00001,scale=True,scope="d_h1_conv"))
     def __init__(self, epsilon=1e-5, momentum=0.9, name="batch_norm"):
-        with tf.variable_scope(name):
-            self.epsilon = epsilon
-            self.momentum = momentum
-            self.name = name
+        self.epsilon = epsilon
+        self.momentum = momentum
+        self.name = name
+        self.bn_layer = tf.keras.layers.BatchNormalization(
+            epsilon=epsilon, momentum=momentum, name=name)
 
     def __call__(self, x, train=True):
-        return tf.contrib.layers.batch_norm(
-            x,
-            decay=self.momentum,
-            updates_collections=None,
-            epsilon=self.epsilon,
-            scale=True,
-            scope=self.name)
+        return self.bn_layer(x, training=train)
 
 
 def disc_conv(batch_input, out_channels, stride):
-    with tf.variable_scope("conv"):
+    with tf.name_scope("conv"):
         in_channels = batch_input.get_shape()[3]
-        filter = tf.get_variable(
-            "filter", [4, 4, in_channels, out_channels],
-            dtype=tf.float32,
-            initializer=tf.random_normal_initializer(0, 0.02))
+        filter = tf.Variable(
+            tf.random.normal([4, 4, in_channels, out_channels], stddev=0.02, dtype=tf.float32),
+            name="filter")
         # [batch, in_height, in_width, in_channels], [filter_width, filter_height, in_channels, out_channels]
         #     => [batch, out_height, out_width, out_channels]
         padded_input = tf.pad(
@@ -197,15 +183,15 @@ def thoo_steer_conv_ch(input_,
                        d_w=1,
                        name="steer_conv2d"):
     p_stride = [1, d_h, d_w, 1]
-    with tf.variable_scope(name):
+    with tf.name_scope(name):
 
         Rch, Gch, Bch = tf.split(input_, num_or_size_splits=3, axis=3)
 
-        w = tf.get_variable(
-            'weight', [k_h, k_w, 1, output_dim],
-            initializer=tf.contrib.layers.xavier_initializer_conv2d())
-        biases = tf.get_variable(
-            'biases', [output_dim], initializer=tf.constant_initializer(0.0))
+        w = tf.Variable(
+            tf.keras.initializers.GlorotUniform()([k_h, k_w, 1, output_dim]),
+            name='weight')
+        biases = tf.Variable(
+            tf.zeros([output_dim]), name='biases')
 
         w_rot = [w]
         for i in range(3):
@@ -245,9 +231,10 @@ def thoo_steer_conv(input_,
     with tf.variable_scope(name):
         w = tf.get_variable(
             'weight', [k_h, k_w, input_.get_shape()[-1], output_dim],
-            initializer=tf.contrib.layers.xavier_initializer_conv2d())
-        biases = tf.get_variable(
-            'biases', [output_dim], initializer=tf.constant_initializer(0.0))
+            tf.keras.initializers.GlorotUniform()([k_h, k_w, input_.shape[-1], output_dim]),
+            name='weight')
+        biases = tf.Variable(
+            tf.zeros([output_dim]), name='biases')
 
         w_rot = [w]
         for i in range(3):
@@ -345,10 +332,10 @@ def conv2d_nobias(input_,
                   stddev=0.02,
                   t_padding='SAME',
                   name="conv2d"):
-    with tf.variable_scope(name):
-        w = tf.get_variable(
-            'weight', [k_h, k_w, input_.get_shape()[-1], output_dim],
-            initializer=tf.contrib.layers.xavier_initializer_conv2d())
+    with tf.name_scope(name):
+        w = tf.Variable(
+            tf.keras.initializers.GlorotUniform()([k_h, k_w, input_.get_shape()[-1], output_dim]),
+            name='weight')
         conv = tf.nn.conv2d(
             input_, w, strides=[1, d_h, d_w, 1], padding=t_padding)
         return conv
@@ -362,15 +349,16 @@ def convt2d(input_,
             d_w=2,
             stddev=0.02,
             name="convt2d"):
-    with tf.variable_scope(name):
-        w = tf.get_variable('weight', [k_h, k_w, input_.get_shape()[-1], output_dim], \
-         initializer=tf.truncated_normal_initializer(stddev=stddev))
+    with tf.name_scope(name):
+        w = tf.Variable(
+            tf.random.truncated_normal([k_h, k_w, input_.get_shape()[-1], output_dim], stddev=stddev),
+            name='weight')
         conv = tf.nn.conv2d_transpose(
             input_, w, strides=[1, d_h, d_w, 1], padding='SAME')
 
-        biases = tf.get_variable(
-            'biases', [output_dim], initializer=tf.constant_initializer(0.0))
-        conv = tf.reshape(tf.nn.bias_add(conv, biases), conv.get_shape())
+        biases = tf.Variable(
+            tf.zeros([output_dim]), name='biases')
+        conv = tf.reshape(tf.nn.bias_add(conv, biases), tf.shape(conv))
 
         return conv
 

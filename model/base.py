@@ -39,8 +39,6 @@ class Model(object):
 
 
     def save(self, checkpoint_dir, global_step=None):
-        self.saver = tf.train.Saver(max_to_keep=5)
-
         print(" [*] Saving checkpoints...")
         model_name = type(self).__name__ or "Reader"
         model_dir = self.get_model_dir()
@@ -48,37 +46,27 @@ class Model(object):
         checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
         if not os.path.exists(checkpoint_dir):
             os.makedirs(checkpoint_dir)
-        self.saver.save(
-            self.sess,
-            os.path.join(checkpoint_dir, model_name),
-            global_step=global_step)
+        
+        # In TF2, use tf.train.Checkpoint for saving
+        checkpoint_path = os.path.join(checkpoint_dir, model_name)
+        if hasattr(self, 'checkpoint'):
+            self.checkpoint.save(file_prefix=checkpoint_path)
+        else:
+            print(" [!] No checkpoint manager found. Implement checkpoint in model.")
 
     def load(self, checkpoint_dir, needed = False):
 
-        # count parameters
+        # count parameters - updated for TF2
         param_count = 0
-        for var in tf.global_variables():
-            if (re.search('generator', var.name) != None):
-                shape = var.get_shape()
-                var_params = 1
-                for dim in shape:
-                    var_params *= dim.value
-                param_count += var_params
+        if hasattr(self, 'trainable_variables'):
+            for var in self.trainable_variables:
+                if 'generator' in var.name:
+                    shape = var.get_shape()
+                    var_params = 1
+                    for dim in shape:
+                        var_params *= dim
+                    param_count += var_params
         print('Generator variables: %d' % param_count)
-
-        # temporary
-        if 0:
-            select_vars = [
-                var for var in tf.global_variables()
-                if (re.search("generator", var.name) != None)
-            ]
-
-            for var in select_vars:
-                print(var.name + '\n')
-
-            self.saver = tf.train.Saver(var_list=select_vars, max_to_keep=5)
-        else:
-            self.saver = tf.train.Saver(max_to_keep=5)
 
         print(" [*] Loading checkpoints...")
         if needed:
@@ -86,16 +74,20 @@ class Model(object):
         else:
             model_dir = self.get_model_dir()
         checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
-        ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
-        if ckpt and ckpt.model_checkpoint_path:
-            print(ckpt.model_checkpoint_path)
-            ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
-            self.saver.restore(self.sess,
-                               os.path.join(checkpoint_dir, ckpt_name))
-            print(" [*] Load SUCCESS")
-            return True
+        
+        # TF2 checkpoint loading
+        if hasattr(self, 'checkpoint'):
+            latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir)
+            if latest_checkpoint:
+                print(f"Loading from: {latest_checkpoint}")
+                self.checkpoint.restore(latest_checkpoint)
+                print(" [*] Load SUCCESS")
+                return True
+            else:
+                print(" [!] Load failed...")
+                if needed:
+                    raise FileNotFoundError(checkpoint_dir)
+                return False
         else:
-            print(" [!] Load failed...")
-            if needed:
-                raise FileNotFoundError(checkpoint_dir)
+            print(" [!] No checkpoint manager found. Implement checkpoint in model.")
             return False

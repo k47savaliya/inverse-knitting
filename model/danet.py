@@ -566,7 +566,7 @@ def model_composited_RFI(t_imgs_dict, t_labels_dict, params = dict()):
         def encoder(t_input, name):
             with runits('relu') as activations:
                 t_logits = oper_img2img(t_input, prog_ch, params=params, name='img2prog')
-                t_logits = tf.contrib.layers.avg_pool2d(t_logits, [8,8], 8)
+                t_logits = tf.nn.avg_pool2d(t_logits, ksize=[8,8], strides=8, padding='VALID')
                 t_instr = tf.argmax(t_logits, axis=3, name="prediction")
                 net.latent[name] = t_logits
                 net.logits[name] = t_logits
@@ -960,12 +960,12 @@ def model_composited(t_imgs_dict, t_labels_dict, params = dict()):
     fakes = filter(lambda name: name != 'real' and name != 'unsup', t_imgs_dict.keys())
 
     # create generator
-    with tf.variable_scope("generator"):
+    with tf.name_scope("generator"):
 
         def encoder(t_input, name):
             with runits('relu') as activations:
                 t_logits = oper_img2img(t_input, prog_ch, params=params, name='img2prog')
-                t_logits = tf.contrib.layers.avg_pool2d(t_logits, [8,8], 8)
+                t_logits = tf.nn.avg_pool2d(t_logits, ksize=[8,8], strides=8, padding='VALID')
                 t_instr = tf.argmax(t_logits, axis=3, name="prediction")
                 net.latent[name] = t_logits
                 net.logits[name] = t_logits

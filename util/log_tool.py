@@ -201,7 +201,7 @@ def _plot_confusion_matrix(cm, labels):
     return image
 
 def tf_summary_confusionmat(t_confusionmat, numlabel, tag='confusion matrix'):
-    t_img_confmat = tf.py_func(lambda x: _plot_confusion_matrix(x, 
+    t_img_confmat = tf.py_function(lambda x: _plot_confusion_matrix(x, 
                                                         [str(x) for x in np.arange(numlabel)]), 
                                 [t_confusionmat], 
                                 [tf.uint8])

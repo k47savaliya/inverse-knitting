@@ -93,13 +93,13 @@ def model_composited(t_imgs_dict, t_labels_dict, params = dict()):
                     t_logits = oper_img2img(t_input, prog_ch, params, 'img2prog')
                 elif reduce_type == 'avg_pooling':
                     t_logits = oper_img2img(t_resi_inp, prog_ch, params, 'img2prog')
-                    t_logits = tf.contrib.layers.avg_pool2d(t_logits, [8,8], 8)
+                    t_logits = tf.nn.avg_pool2d(t_logits, ksize=[8,8], strides=8, padding='VALID')
                 elif reduce_type == 'max_pooling':
                     t_logits = oper_img2img(t_resi_inp, prog_ch, params, 'img2prog')
-                    t_logits = tf.contrib.layers.max_pool2d(t_logits, [8,8], 8)
+                    t_logits = tf.nn.max_pool2d(t_logits, ksize=[8,8], strides=8, padding='VALID')
                 elif reduce_type == 'unet':
                     t_logits = generator_unet(t_resi_inp, prog_ch, params, 'img2prog')
-                    t_logits = tf.contrib.layers.avg_pool2d(t_logits, [8,8], 8)
+                    t_logits = tf.nn.avg_pool2d(t_logits, ksize=[8,8], strides=8, padding='VALID')
                 else:
                     raise ValueError('Invalid reduction type %s' % reduce_type)
 
