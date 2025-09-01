@@ -52,6 +52,8 @@ def create_parser():
                             + "valid values include: transfer | norendering | warping | nuclear | none")
     parser.add_argument("--gram_layers", nargs='*', default=def_gram_layers,
                        help="List of layers for the gram loss")
+    parser.add_argument("--predict", type=str, default="",
+                       help="Path to a single image for prediction (bypasses dataset loader)")
     return parser
 
 model_dict = {
@@ -81,8 +83,26 @@ def main():
     # object generation - no more sessions in TF2
     obj_model = NNModel(tf_flag = FLAGS)
 
-    # Train or Test
-    if FLAGS.training:
+    # Train, Test, or Predict
+    if FLAGS.predict:
+        # Single image prediction mode
+        print(f"🎯 Single image prediction mode")
+        print(f"📁 Input image: {FLAGS.predict}")
+        
+        # Create output path
+        import os
+        output_dir = FLAGS.checkpoint_dir
+        image_name = os.path.splitext(os.path.basename(FLAGS.predict))[0]
+        save_path = os.path.join(output_dir, f"{image_name}_prediction.png")
+        
+        # Run prediction
+        pred_map, probs = obj_model.predict(FLAGS.predict, save_path)
+        
+        print(f"🎉 Prediction complete!")
+        print(f"📊 Output shape: {pred_map.shape}")
+        print(f"💾 Saved to: {save_path}")
+        
+    elif FLAGS.training:
         obj_model.train()
     else:
         obj_model.test()

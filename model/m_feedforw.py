@@ -837,3 +837,111 @@ class FeedForwardNetworks(Model):
             if needed:
                 print("[!] Error loading parameters from %s" % fname)
                 raise
+
+    def predict(self, image_path, save_path="./prediction.png"):
+        """
+        Predict instruction map for a single image (bypasses dataset loader)
+        
+        Args:
+            image_path: Path to input knitting image
+            save_path: Path to save the predicted instruction map
+            
+        Returns:
+            pred_map: Predicted instruction map as numpy array
+        """
+        import tensorflow as tf
+        from PIL import Image
+        import numpy as np
+        import os
+        
+        print(f"🔍 Predicting instructions for: {image_path}")
+        
+        # Load checkpoint
+        checkpoint_dir = self.oparam.checkpoint_dir
+        checkpoint = tf.train.Checkpoint(model=self)
+        checkpoint_manager = tf.train.CheckpointManager(
+            checkpoint, checkpoint_dir, max_to_keep=5)
+        
+        if checkpoint_manager.latest_checkpoint:
+            checkpoint.restore(checkpoint_manager.latest_checkpoint)
+            print(f"✅ Restored model from {checkpoint_manager.latest_checkpoint}")
+        else:
+            print("⚠️  No checkpoint found, using randomly initialized weights")
+        
+        # --- Load & preprocess image ---
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Image not found: {image_path}")
+            
+        img = Image.open(image_path).convert("L")  # Convert to grayscale
+        original_size = img.size
+        print(f"📸 Original image size: {original_size}")
+        
+        # Resize to model input size
+        target_size = self.oparam.image_size
+        img = img.resize((target_size, target_size), Image.Resampling.LANCZOS)
+        print(f"🔄 Resized to: {target_size}x{target_size}")
+        
+        # Convert to numpy and normalize to [-0.5, 0.5] range (typical for this model)
+        img_array = np.array(img).astype(np.float32) / 255.0 - 0.5
+        
+        # Add batch and channel dimensions: [1, H, W, 1]
+        img_tensor = np.expand_dims(img_array, axis=(0, -1))
+        print(f"🔢 Input tensor shape: {img_tensor.shape}")
+        
+        # Convert to tensorflow tensor
+        X_in = {'real': tf.constant(img_tensor)}
+        Y_out = {}  # Empty for inference
+        
+        # --- Forward pass ---
+        print("🚀 Running forward pass...")
+        
+        try:
+            # Run model inference
+            net, _, _, _ = self.model_define(X_in=X_in, Y_out=Y_out, is_train=False)
+            
+            # Get prediction outputs
+            if 'real' in net.logits:
+                logits = net.logits['real']
+                probs = tf.nn.softmax(logits)
+                pred_map = tf.argmax(logits, axis=-1)
+                
+                # Convert to numpy
+                pred_map_np = pred_map[0].numpy()  # Remove batch dimension
+                probs_np = probs[0].numpy()
+                
+                print(f"📊 Prediction map shape: {pred_map_np.shape}")
+                print(f"📊 Probability shape: {probs_np.shape}")
+                
+                # Calculate confidence
+                max_probs = np.max(probs_np, axis=-1)
+                confidence = np.mean(max_probs)
+                print(f"🎯 Average confidence: {confidence:.4f}")
+                
+            else:
+                raise RuntimeError("Model output 'real' not found in logits")
+                
+        except Exception as e:
+            print(f"❌ Error during forward pass: {e}")
+            raise
+        
+        # --- Save prediction ---
+        try:
+            # Use the save_instr function if available
+            from util import save_instr
+            save_instr(save_path, pred_map_np)
+            print(f"✅ Instruction map saved to: {save_path}")
+            
+        except ImportError:
+            # Fallback: save as grayscale image
+            # Scale prediction values to 0-255 range
+            pred_img = (pred_map_np * 255 / np.max(pred_map_np)).astype(np.uint8)
+            Image.fromarray(pred_img).save(save_path)
+            print(f"✅ Prediction image saved to: {save_path}")
+        
+        # --- Optional: Save confidence map ---
+        conf_path = save_path.replace('.png', '_confidence.png')
+        conf_img = (max_probs * 255).astype(np.uint8)
+        Image.fromarray(conf_img).save(conf_path)
+        print(f"📈 Confidence map saved to: {conf_path}")
+        
+        return pred_map_np, probs_np
