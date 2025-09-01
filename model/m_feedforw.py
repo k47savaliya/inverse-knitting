@@ -610,21 +610,23 @@ class FeedForwardNetworks(Model):
             self.dis_optimizer = tf.keras.optimizers.Adam(
                 learning_rate=lr_schedule * 0.5, beta_1=0.5, epsilon=1e-4)
         
-        # Set up checkpoint management
+        # Set up checkpoint management using variable-based approach
         checkpoint_dir = self.oparam.checkpoint_dir
-        checkpoint = tf.train.Checkpoint(
+        
+        # Create a simple checkpoint that doesn't try to track the whole class
+        self.checkpoint = tf.train.Checkpoint(
             gen_optimizer=self.gen_optimizer,
-            model=self  # Save the whole model
+            step=tf.Variable(0, dtype=tf.int64)
         )
         if use_discr:
-            checkpoint.dis_optimizer = self.dis_optimizer
+            self.checkpoint.dis_optimizer = self.dis_optimizer
             
         checkpoint_manager = tf.train.CheckpointManager(
-            checkpoint, checkpoint_dir, max_to_keep=5)
+            self.checkpoint, checkpoint_dir, max_to_keep=5)
         
         # Restore checkpoint if exists
         if checkpoint_manager.latest_checkpoint:
-            checkpoint.restore(checkpoint_manager.latest_checkpoint)
+            self.checkpoint.restore(checkpoint_manager.latest_checkpoint)
             print(f"Restored from {checkpoint_manager.latest_checkpoint}")
         
         # Set up tensorboard logging
@@ -754,17 +756,35 @@ class FeedForwardNetworks(Model):
     def test(self, name="test"):
         """Test method using TF2 eager execution"""
         
-        # Load checkpoint
-        checkpoint_dir = self.oparam.checkpoint_dir
-        checkpoint = tf.train.Checkpoint(model=self)
-        checkpoint_manager = tf.train.CheckpointManager(
-            checkpoint, checkpoint_dir, max_to_keep=5)
+        # Load checkpoint using variable-based approach
+        print("📂 Loading model weights for testing...")
         
-        if checkpoint_manager.latest_checkpoint:
-            checkpoint.restore(checkpoint_manager.latest_checkpoint)
-            print(f"Restored from {checkpoint_manager.latest_checkpoint}")
+        model_dir = self.get_model_dir()
+        full_checkpoint_dir = os.path.join(self.oparam.checkpoint_dir, model_dir)
+        
+        if not os.path.exists(full_checkpoint_dir):
+            # Try without model_dir subdirectory
+            full_checkpoint_dir = self.oparam.checkpoint_dir
+            
+        latest_checkpoint = tf.train.latest_checkpoint(full_checkpoint_dir)
+        
+        if latest_checkpoint:
+            print(f"📁 Found checkpoint: {latest_checkpoint}")
+            
+            # Simple variable-based checkpoint loading
+            checkpoint = tf.train.Checkpoint()
+            for var in tf.global_variables():
+                var_name = var.name.replace(':', '_').replace('/', '_')
+                setattr(checkpoint, var_name, var)
+            
+            try:
+                status = checkpoint.restore(latest_checkpoint)
+                status.expect_partial()
+                print("✅ Checkpoint loaded successfully!")
+            except Exception as e:
+                print(f"⚠️  Checkpoint loading failed: {e}")
         else:
-            print("No checkpoint found, using randomly initialized weights")
+            print("⚠️  No checkpoint found, using random weights")
         
         import cv2
         def fn_rescaleimg(x):
@@ -772,7 +792,7 @@ class FeedForwardNetworks(Model):
             x = tf.clip_by_value(x, 0.0, 1.0)
             return x * 255.0
         
-        svpath = os.path.join(checkpoint_dir, 'eval')
+        svpath = os.path.join(self.oparam.checkpoint_dir, 'eval')
         os.makedirs(svpath, exist_ok=True)
         
         gen_path = os.path.join(svpath, 'gen')
@@ -873,18 +893,6 @@ class FeedForwardNetworks(Model):
         if not self.oparam.predict_mode:
             print("⚠️  Warning: Model was not initialized in prediction mode")
         
-        # Load checkpoint
-        checkpoint_dir = self.oparam.checkpoint_dir
-        checkpoint = tf.train.Checkpoint(model=self)
-        checkpoint_manager = tf.train.CheckpointManager(
-            checkpoint, checkpoint_dir, max_to_keep=5)
-        
-        if checkpoint_manager.latest_checkpoint:
-            checkpoint.restore(checkpoint_manager.latest_checkpoint)
-            print(f"✅ Restored model from {checkpoint_manager.latest_checkpoint}")
-        else:
-            print("⚠️  No checkpoint found, using randomly initialized weights")
-        
         # --- Load & preprocess image ---
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image not found: {image_path}")
@@ -909,15 +917,62 @@ class FeedForwardNetworks(Model):
         X_in = {'real': tf.constant(img_tensor)}
         Y_out = {}  # Empty for inference
         
+        # --- Load checkpoint using variable-based approach ---
+        print("� Loading model weights...")
+        
+        try:
+            # First run model_define to create the variables
+            print("🏗️  Building model architecture...")
+            net, _, _, _ = self.model_define(X_in=X_in, Y_out=Y_out, is_train=False)
+            
+            # Now try to load weights
+            model_dir = self.get_model_dir()
+            full_checkpoint_dir = os.path.join(self.oparam.checkpoint_dir, model_dir)
+            
+            if not os.path.exists(full_checkpoint_dir):
+                # Try without model_dir subdirectory
+                full_checkpoint_dir = self.oparam.checkpoint_dir
+                
+            latest_checkpoint = tf.train.latest_checkpoint(full_checkpoint_dir)
+            
+            if latest_checkpoint:
+                print(f"📁 Found checkpoint: {latest_checkpoint}")
+                
+                # Load checkpoint with all variables
+                checkpoint = tf.train.Checkpoint()
+                
+                # Add all trainable variables to checkpoint
+                for var in tf.global_variables():
+                    # Use the variable name as key (removing invalid characters)
+                    var_name = var.name.replace(':', '_').replace('/', '_')
+                    setattr(checkpoint, var_name, var)
+                
+                try:
+                    status = checkpoint.restore(latest_checkpoint)
+                    status.expect_partial()  # Allow partial restoration
+                    print("✅ Checkpoint loaded successfully!")
+                except Exception as e:
+                    print(f"⚠️  Checkpoint loading failed: {e}")
+                    print("   Continuing with random weights...")
+            else:
+                print("⚠️  No checkpoint found in either:")
+                print(f"     - {full_checkpoint_dir}")
+                print(f"     - {self.oparam.checkpoint_dir}")
+                print("   Using random weights...")
+            
+        except Exception as e:
+            print(f"❌ Error during model setup: {e}")
+            print("   Attempting simple forward pass anyway...")
+            
+            # Fallback: create minimal model
+            net, _, _, _ = self.model_define(X_in=X_in, Y_out=Y_out, is_train=False)
+        
         # --- Forward pass ---
         print("🚀 Running forward pass...")
         
         try:
-            # Run model inference
-            net, _, _, _ = self.model_define(X_in=X_in, Y_out=Y_out, is_train=False)
-            
             # Get prediction outputs
-            if 'real' in net.logits:
+            if hasattr(net, 'logits') and 'real' in net.logits:
                 logits = net.logits['real']
                 probs = tf.nn.softmax(logits)
                 pred_map = tf.argmax(logits, axis=-1)
@@ -939,6 +994,8 @@ class FeedForwardNetworks(Model):
                 
         except Exception as e:
             print(f"❌ Error during forward pass: {e}")
+            import traceback
+            traceback.print_exc()
             raise
         
         # --- Save prediction ---

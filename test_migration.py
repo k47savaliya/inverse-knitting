@@ -12,49 +12,49 @@ import numpy as np
 # Add current directory to path so we can import model
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-def test_model_init():
-    """Test that model initializes correctly in prediction mode"""
+def test_prediction_mode():
+    """Test that prediction mode works without dataset"""
     
-    print("🧪 Testing model initialization in prediction mode...")
-    
-    # Create test flags
-    class TestFlags:
-        def __init__(self):
-            self.learning_rate = 0.0005
-            self.max_iter = 1000
-            self.batch_size = 1
-            self.image_size = 160
-            self.threads = 1
-            self.dataset = "./test_dataset"  # Doesn't need to exist
-            self.seed = 2018
-            self.model_type = "Forward"
-            self.checkpoint_dir = "./test_checkpoint"
-            self.training = False
-            self.params = []
-            self.weights = []
-            self.component = ""
-            self.gram_layers = []
-            self.predict = "test_image.png"  # Enable prediction mode
+    print("\n🧪 Testing prediction mode...")
     
     try:
         # Test model import
         print("📦 Importing model...")
         from model import FeedForwardNetworks
         
-        # Test model initialization
+        # Create test flags with prediction mode
+        class PredictFlags:
+            def __init__(self):
+                self.learning_rate = 0.0005
+                self.max_iter = 1000
+                self.batch_size = 1
+                self.image_size = 160
+                self.threads = 1
+                self.dataset = "./nonexistent_dataset"  # This shouldn't matter
+                self.seed = 2018
+                self.model_type = "Forward"
+                self.checkpoint_dir = "./test_checkpoint"
+                self.training = False
+                self.params = []
+                self.weights = []
+                self.component = ""
+                self.gram_layers = []
+                self.predict = "test_image.png"  # Enable prediction mode
+        
+        # Test model initialization in prediction mode
         print("🏗️  Initializing model in prediction mode...")
-        flags = TestFlags()
+        flags = PredictFlags()
         model = FeedForwardNetworks(tf_flag=flags)
         
-        print("✅ Model initialization successful!")
+        print("✅ Prediction mode initialization successful!")
         print(f"   - Prediction mode: {model.oparam.predict_mode}")
         print(f"   - Loader: {model.loader}")
-        print(f"   - Image size: {model.oparam.image_size}")
+        print(f"   - Checkpoint dir: {model.oparam.checkpoint_dir}")
         
         return True
         
     except Exception as e:
-        print(f"❌ Model initialization failed: {e}")
+        print(f"❌ Prediction mode test failed: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -109,7 +109,7 @@ def main():
     tf2_ok = test_tf2_features()
     
     # Test model initialization
-    model_ok = test_model_init()
+    model_ok = test_prediction_mode()
     
     print("\n" + "=" * 50)
     if tf2_ok and model_ok:
