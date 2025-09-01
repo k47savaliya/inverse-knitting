@@ -28,6 +28,7 @@ def create_minimal_flags(checkpoint_dir, image_size=160):
             self.weights = []
             self.component = ""
             self.gram_layers = []
+            self.predict = "dummy"  # Enable prediction mode
     
     return MinimalFlags()
 

@@ -1,5 +1,9 @@
 # Single Image Prediction Guide
 
+## ✅ Problem Solved!
+
+The dataset loader issue has been fixed! The model now automatically detects prediction mode and skips dataset loading.
+
 ## Quick Start
 
 You can now predict knitting instructions for a single image without needing the full dataset structure!
@@ -21,14 +25,45 @@ python predict_single.py \
   --output my_prediction.png
 ```
 
+### Method 3: Test the migration
+
+```bash
+python test_migration.py
+```
+
 ## What it does
 
-1. **Loads your image** and converts to grayscale
-2. **Resizes to 160x160** (model input size)
-3. **Normalizes pixel values** to [-0.5, 0.5] range
-4. **Runs forward pass** through the neural network
-5. **Saves instruction map** as PNG image
-6. **Saves confidence map** showing prediction certainty
+1. **Detects prediction mode** - Automatically skips dataset loader when `--predict` flag is used
+2. **Loads your image** and converts to grayscale
+3. **Resizes to 160x160** (model input size)
+4. **Normalizes pixel values** to [-0.5, 0.5] range
+5. **Runs forward pass** through the neural network
+6. **Saves instruction map** as PNG image
+7. **Saves confidence map** showing prediction certainty
+
+## Key Changes Made
+
+### ✅ Fixed Dataset Loader Issue
+
+The model constructor now checks for prediction mode:
+
+```python
+# In FeedForwardNetworks.__init__()
+if not self.oparam.predict_mode:
+    # Normal training/testing mode → load datasets
+    self.loader = Loader(...)
+else:
+    # Prediction mode → skip dataset loading
+    self.loader = None
+    print("⚡ Skipping dataset loader, running in prediction mode")
+```
+
+### ✅ TensorFlow 2 Compatibility
+
+- Removed all `tf.Session` dependencies
+- Uses `@tf.function` and `GradientTape` for training
+- Modern checkpoint management with `tf.train.Checkpoint`
+- Eager execution by default
 
 ## Output Files
 

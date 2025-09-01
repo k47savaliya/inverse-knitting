@@ -79,6 +79,9 @@ class FeedForwardNetworks(Model):
         self.oparam.model_type = tf_flag.model_type
         self.oparam.checkpoint_dir = tf_flag.checkpoint_dir
         self.oparam.is_train = tf_flag.training
+        
+        # Add predict mode flag
+        self.oparam.predict_mode = getattr(tf_flag, 'predict', "") != ""
 
         # set default weights
         self.oparam.weights = {
@@ -187,15 +190,25 @@ class FeedForwardNetworks(Model):
         else:
             self.oparam.params['use_tran'] = False
             self.oparam.params['use_rend'] = False
-        self.loader = Loader(self.oparam.dataset, self.oparam.batch_size, self.oparam.threads, self.oparam.params)
-
-        if len(self.loader.fakes) > 1:
-            print('\n\n/!\\ Using multiple types of fake data.\nMake sure this is intended and not an error!\n', self.loader.fakes)
-    
-        if self.oparam.is_train:
-            self.build_model()
+        
+        # Skip dataset loading in prediction mode
+        if not self.oparam.predict_mode:
+            # Normal training/testing mode → load datasets
+            self.loader = Loader(self.oparam.dataset, self.oparam.batch_size, self.oparam.threads, self.oparam.params)
+            
+            if len(self.loader.fakes) > 1:
+                print('\n\n/!\\ Using multiple types of fake data.\nMake sure this is intended and not an error!\n', self.loader.fakes)
         else:
-            self.build_model_test()
+            # Prediction mode → skip dataset loading
+            self.loader = None
+            print("⚡ Skipping dataset loader, running in prediction mode")
+        
+        # Only build model for training/testing, not for prediction
+        if not self.oparam.predict_mode:
+            if self.oparam.is_train:
+                self.build_model()
+            else:
+                self.build_model_test()
 
     def model_define(self,
                      X_in,
@@ -855,6 +868,10 @@ class FeedForwardNetworks(Model):
         import os
         
         print(f"🔍 Predicting instructions for: {image_path}")
+        
+        # Ensure we're in prediction mode
+        if not self.oparam.predict_mode:
+            print("⚠️  Warning: Model was not initialized in prediction mode")
         
         # Load checkpoint
         checkpoint_dir = self.oparam.checkpoint_dir
